@@ -1,4 +1,4 @@
-# Tabitha Portfolio
+# PersonalPortfolio
 
 A full-stack personal portfolio SPA built with ASP.NET Core (Minimal API) and Vue 3 + Vite + TypeScript.
 
@@ -16,7 +16,7 @@ A full-stack personal portfolio SPA built with ASP.NET Core (Minimal API) and Vu
 
 ## Project Structure
 ```
-TabithaPortfolio.sln
+PersonalPortfolio.sln
 Server/                # ASP.NET Core minimal API
   Models/              # Record types for domain
   Services/            # In-memory data provider
