@@ -72,6 +72,83 @@ Currently data lives in `PortfolioData` (in-memory). Extend or replace with a da
 - Azure App Service or Azure Container Apps for backend
 - Static frontend hosting (Azure Static Web Apps / GitHub Pages) hitting hosted API
 
+## Docker / Containerization
+
+Two supported approaches:
+
+### 1. Multi-Container (Recommended for local dev clarity)
+
+Services: `api` (.NET) + `frontend` (nginx serving built Vue app)
+
+Build & run (requires Docker):
+```powershell
+docker compose up --build
+```
+Then:
+- API: http://localhost:8080 (health: `/api/status`)
+- Frontend: http://localhost:5173 (reverse-proxy not used; frontend calls API directly)
+
+Edit code & rebuild changed service:
+```powershell
+docker compose build api
+docker compose up -d api
+```
+
+### 2. Single Container (API serves static SPA)
+
+The backend `Server/Dockerfile` builds frontend in an earlier stage and copies its `dist` output to `wwwroot`.
+
+Build:
+```powershell
+docker build -t personal-portfolio-all-in-one ./Server
+```
+Run:
+```powershell
+docker run -p 8080:8080 personal-portfolio-all-in-one
+```
+Browse http://localhost:8080 (API JSON status at `/api/status`).
+
+Skip frontend build (API only) by targeting the `final-no-frontend` stage:
+```powershell
+docker build -t personal-portfolio-api --target final-no-frontend ./Server
+```
+
+### Environment Overrides
+- Change API port: set `ASPNETCORE_URLS` env or map a different host port.
+  ```powershell
+  docker run -e ASPNETCORE_URLS=http://+:5000 -p 5000:5000 personal-portfolio-all-in-one
+  ```
+
+### Development Hot Reload (Optional)
+For iterative backend development without rebuilding the image each time, you can:
+```powershell
+docker run --rm -it -v ${PWD}/Server:/src -w /src -p 8080:8080 mcr.microsoft.com/dotnet/sdk:9.0 bash -c "dotnet watch run --urls http://0.0.0.0:8080"
+```
+Similarly for the frontend:
+```powershell
+docker run --rm -it -v ${PWD}/frontend:/app -w /app -p 5173:5173 node:22-alpine sh -c "npm install && npm run dev -- --host"
+```
+
+### Image Size Notes
+- Separate build + runtime stages reduce final size.
+- Using `frontend` multi-stage avoids shipping build tooling in nginx image.
+
+### Health Checks
+- API container: root GET (or `/api/status`).
+- Frontend container: `/healthz` simple endpoint configured in nginx.
+
+### Production Deployment Options
+- Push both images to a registry (e.g., GHCR / Docker Hub) and deploy via orchestrator (Azure Container Apps, Kubernetes, App Service for Containers).
+- Or use single container for simplest hosting where only one port is allowed.
+
+### Security Hardening (Next Steps)
+- Add non-root user layers.
+- Apply `readonly` filesystem + `no-new-privileges` in runtime.
+- Configure caching headers more granularly.
+- Add reverse proxy (nginx / YARP) if adding SSR or auth.
+
+---
+
 ## Next Step Suggestions
 1. SEO & Metadata: Add `<head>` meta tags, OpenGraph, sitemap.xml, robots.txt.
 2. Content Editing: Move data to JSON or a lightweight CMS (e.g., static JSON in blob storage, headless CMS, or YAML in repo).
@@ -85,6 +162,8 @@ Currently data lives in `PortfolioData` (in-memory). Extend or replace with a da
 10. Light Theme Toggle: Add CSS variables + toggle persisted in localStorage.
 11. Error Boundary / Logging: Global error handler + structured logging.
 12. OpenAPI Client Generation: Use NSwag to generate TypeScript client if contracts grow.
+13. Docker Hardening: Add non-root user and stricter permissions.
+14. CI Docker Cache: Use GitHub Actions buildx with layer caching.
 
 ## Environment Variables
 Frontend: `.env.development` sets `VITE_API_BASE_URL`.

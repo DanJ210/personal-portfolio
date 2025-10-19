@@ -1,0 +1,12 @@
+# Root dockerignore for multi-service build context
+Server/bin/
+Server/obj/
+frontend/node_modules/
+frontend/dist/
+.git
+.gitignore
+.vscode/
+Dockerfile
+**/*.user
+**/*.swp
+**/*.tmp

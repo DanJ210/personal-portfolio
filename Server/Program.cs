@@ -28,8 +28,15 @@ if (hasHttps)
 }
 app.UseCors("portfolio");
 
+// Serve static frontend (if present) for single-container deployment.
+// The Dockerfile copies built frontend assets to wwwroot. These middleware
+// calls are no-ops if wwwroot doesn't exist.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Root
-app.MapGet("/", () => Results.Ok(new { message = "Portfolio API running" }));
+// If index.html exists it will be served by static files. Provide JSON fallback at /api/status
+app.MapGet("/api/status", () => Results.Ok(new { message = "Portfolio API running" }));
 
 // Portfolio endpoints
 app.MapGet("/api/profile", (IPortfolioData data) => data.GetProfile())

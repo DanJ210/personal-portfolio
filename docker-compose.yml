@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Server/Dockerfile
+      target: final-no-frontend
+    image: personal-portfolio-api:latest
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/status"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8080
+    image: personal-portfolio-frontend:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    environment: []
+    ports:
+      - "5173:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+# Single-container (API + static) usage example:
+# docker build -t portfolio-all-in-one ./Server
+# docker run -p 8080:8080 portfolio-all-in-one

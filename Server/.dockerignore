@@ -1,0 +1,15 @@
+bin/
+obj/
+*.user
+*.swp
+*.tmp
+.dockerignore
+Dockerfile
+
+# IDE / tooling
+.vscode/
+.idea/
+
+# Git
+.git
+.gitignore
