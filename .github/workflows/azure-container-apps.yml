@@ -8,7 +8,7 @@ on:
 
 env:
   ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }}
-  RESOURCE_GROUP: portfolio-rg-djgha1
+  RESOURCE_GROUP: portfolio-rg
   LOCATION: eastus
   CA_ENV_NAME: portfolio-env
   API_APP_NAME: portfolio-api
