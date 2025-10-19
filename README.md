@@ -174,3 +174,73 @@ MIT (add a LICENSE file if you want to open source).
 
 ---
 Feel free to ask for any enhancements or deployment automation next.
+
+## CI/CD: Azure Container Apps
+
+This project now includes a GitHub Actions workflow (`.github/workflows/azure-container-apps.yml`) and Bicep infra (`infra/main.bicep`) to deploy the API and frontend as two Azure Container Apps pulling images from Azure Container Registry (ACR).
+
+### What the Workflow Does
+1. Builds two images (API, frontend) and tags them with the commit SHA.
+2. Creates (if needed) a resource group and ACR (no admin user) via Azure CLI.
+3. Pushes images to ACR.
+4. Runs a `what-if` then actual Bicep deployment to provision / update:
+   - Log Analytics workspace
+   - Container Apps Environment
+   - API Container App (port 8080, health probe `/api/status`)
+   - Frontend Container App (port 80)
+   - Role assignments granting managed identities AcrPull
+5. Outputs public FQDNs of both apps.
+
+### Required GitHub Secrets / Variables
+Add these to your repository Settings → Secrets and variables → Actions:
+| Name | Purpose |
+|------|---------|
+| `AZURE_CLIENT_ID` | App registration client ID for OIDC login |
+| `AZURE_TENANT_ID` | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription ID |
+| `ACR_UNIQUE_SUFFIX` | Short unique suffix for ACR name (letters/digits) |
+
+> The workflow constructs `ACR_NAME` as `portfolioacr<suffix>`.
+
+### One-Time Azure Setup (OIDC)
+1. Create resource group: `az group create -n portfolio-rg -l eastus`.
+2. Create an App Registration (Portal or CLI) and add a **Federated Credential** for your repo (`main` branch) so `azure/login` can use OIDC (no password secrets).
+3. Assign the App Registration (service principal) `Contributor` (or narrower: `Container Registry Contributor` + `Monitoring Contributor` + `Container App Contributor`) on the resource group.
+
+### Manual Dry Run (Optional)
+You can manually build & push first:
+```powershell
+$suffix = "dj01"  # choose unique
+az group create -n portfolio-rg -l eastus
+az acr create -n portfolioacr$suffix -g portfolio-rg --sku Basic --admin-enabled false
+az acr login -n portfolioacr$suffix
+docker build -t portfolioacr${suffix}.azurecr.io/personal-portfolio-api:manual -f Server/Dockerfile --target final-no-frontend .
+docker push portfolioacr${suffix}.azurecr.io/personal-portfolio-api:manual
+docker build -t portfolioacr${suffix}.azurecr.io/personal-portfolio-frontend:manual frontend
+docker push portfolioacr${suffix}.azurecr.io/personal-portfolio-frontend:manual
+az deployment group create -g portfolio-rg -f infra/main.bicep -p \
+  location=eastus \
+  acrName=portfolioacr${suffix} \
+  envName=portfolio-env \
+  apiAppName=portfolio-api \
+  frontendAppName=portfolio-frontend \
+  apiImage=portfolioacr${suffix}.azurecr.io/personal-portfolio-api:manual \
+  frontendImage=portfolioacr${suffix}.azurecr.io/personal-portfolio-frontend:manual
+az containerapp show -n portfolio-frontend -g portfolio-rg --query properties.configuration.ingress.fqdn -o tsv
+```
+
+### Adjusting Scale
+Modify `minReplicas` / `maxReplicas` parameters in the Bicep deployment (defaults: 0→5). Setting `minReplicas=1` removes cold start latency.
+
+### Security Highlights
+- Managed identity + role assignment for ACR pull (no registry password).
+- ACR admin user disabled.
+- Infrastructure changes previewed with `what-if`.
+
+### Future Enhancements
+- Add Trivy/Grype image scanning step.
+- Add SBOM generation (Syft) + artifact upload.
+- Per-PR preview environments (dynamic app name or revision labels).
+- Custom domain + TLS via Front Door or DNS binding.
+- Traffic splitting for blue/green deploy using multiple revisions.
+
