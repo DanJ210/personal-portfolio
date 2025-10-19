@@ -1,0 +1,7 @@
+{
+  "name": "github-pr",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:DanJ210/personal-portfolio:pull_request",
+  "description": "OIDC for pull request builds",
+  "audiences": [ "api://AzureADTokenExchange" ]
+}
