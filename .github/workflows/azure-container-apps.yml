@@ -33,15 +33,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Debug OIDC context
-        run: |
-          echo "GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME"
-          echo "GITHUB_REF=$GITHUB_REF"
-          echo "GITHUB_HEAD_REF=$GITHUB_HEAD_REF"
-          echo "GITHUB_BASE_REF=$GITHUB_BASE_REF"
-          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
-          echo "GITHUB_SHA=$GITHUB_SHA"
-
       - name: Azure Login (OIDC)
         uses: azure/login@v1
         with:
@@ -111,15 +102,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug OIDC context
-        run: |
-          echo "GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME"
-          echo "GITHUB_REF=$GITHUB_REF"
-          echo "GITHUB_HEAD_REF=$GITHUB_HEAD_REF"
-          echo "GITHUB_BASE_REF=$GITHUB_BASE_REF"
-          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
-          echo "GITHUB_SHA=$GITHUB_SHA"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v1
