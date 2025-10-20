@@ -24,8 +24,8 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     outputs:
-      apiImage: ${{ steps.meta.outputs.apiImage }}
-      frontendImage: ${{ steps.meta.outputs.frontendImage }}
+      apiImage: ${{ steps.publish-images.outputs.apiImage }}
+      frontendImage: ${{ steps.publish-images.outputs.frontendImage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -141,6 +141,28 @@ jobs:
           docker push $API_IMAGE
           docker push $FRONTEND_IMAGE
 
+      - name: List local docker images
+        run: |
+          echo "Local images containing 'personal-portfolio'"
+          docker images --format '{{.Repository}}:{{.Tag}}' | grep 'personal-portfolio' || true
+
+      - name: Publish final image outputs
+        id: publish-images
+        run: |
+          if [ -z "$API_IMAGE" ] || [ -z "$FRONTEND_IMAGE" ]; then
+            echo "ERROR: Cannot publish outputs, API_IMAGE or FRONTEND_IMAGE empty." >&2
+            exit 1
+          fi
+          echo "apiImage=$API_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Published job outputs apiImage=$API_IMAGE frontendImage=$FRONTEND_IMAGE"
+
+      - name: Show published outputs file
+        run: |
+          echo "---- GITHUB_OUTPUT (sanitized) ----"
+          sed 's/\(password\|token\|secret\)=.*/\1=***REDACTED***/I' "$GITHUB_OUTPUT" || echo "(Not readable)"
+          echo "----------------------------------"
+
   provision-deploy:
     runs-on: ubuntu-latest
     needs: build-and-push
@@ -198,10 +220,18 @@ jobs:
           inlineScript: |
             echo "API_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.apiImage }}'"
             echo "FRONTEND_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.frontendImage }}'"
-            if [ -z "${{ needs.build-and-push.outputs.apiImage }}" ] || [ -z "${{ needs.build-and-push.outputs.frontendImage }}" ]; then
-              echo "One or both image outputs are empty. Failing early." >&2
-              exit 1
+            LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
+            EXPECTED_API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
+            EXPECTED_FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
+            API_IMAGE_VALUE='${{ needs.build-and-push.outputs.apiImage }}'
+            FRONTEND_IMAGE_VALUE='${{ needs.build-and-push.outputs.frontendImage }}'
+            if [ -z "$API_IMAGE_VALUE" ] || [ -z "$FRONTEND_IMAGE_VALUE" ]; then
+              echo "WARNING: Upstream outputs empty; falling back to recomputed tags." >&2
+              API_IMAGE_VALUE="$EXPECTED_API_IMAGE"
+              FRONTEND_IMAGE_VALUE="$EXPECTED_FRONTEND_IMAGE"
             fi
+            echo "Using API_IMAGE_VALUE=$API_IMAGE_VALUE"
+            echo "Using FRONTEND_IMAGE_VALUE=$FRONTEND_IMAGE_VALUE"
             az deployment group what-if \
               -g $RESOURCE_GROUP \
               -f infra/main.bicep \
@@ -210,14 +240,24 @@ jobs:
                  envName=$CA_ENV_NAME \
                  apiAppName=$API_APP_NAME \
                  frontendAppName=$FRONTEND_APP_NAME \
-                 apiImage='${{ needs.build-and-push.outputs.apiImage }}' \
-                 frontendImage='${{ needs.build-and-push.outputs.frontendImage }}'
+                 apiImage="$API_IMAGE_VALUE" \
+                 frontendImage="$FRONTEND_IMAGE_VALUE"
 
       - name: Deploy Infra (Bicep)
         uses: azure/cli@v2
         with:
           azcliversion: latest
           inlineScript: |
+            LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
+            EXPECTED_API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
+            EXPECTED_FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
+            API_IMAGE_VALUE='${{ needs.build-and-push.outputs.apiImage }}'
+            FRONTEND_IMAGE_VALUE='${{ needs.build-and-push.outputs.frontendImage }}'
+            if [ -z "$API_IMAGE_VALUE" ] || [ -z "$FRONTEND_IMAGE_VALUE" ]; then
+              echo "WARNING: Upstream outputs empty; falling back to recomputed tags for deploy." >&2
+              API_IMAGE_VALUE="$EXPECTED_API_IMAGE"
+              FRONTEND_IMAGE_VALUE="$EXPECTED_FRONTEND_IMAGE"
+            fi
             az deployment group create \
               -g $RESOURCE_GROUP \
               -f infra/main.bicep \
@@ -226,8 +266,8 @@ jobs:
                  envName=$CA_ENV_NAME \
                  apiAppName=$API_APP_NAME \
                  frontendAppName=$FRONTEND_APP_NAME \
-                 apiImage='${{ needs.build-and-push.outputs.apiImage }}' \
-                 frontendImage='${{ needs.build-and-push.outputs.frontendImage }}'
+                 apiImage="$API_IMAGE_VALUE" \
+                 frontendImage="$FRONTEND_IMAGE_VALUE"
 
       - name: Show URLs
         uses: azure/cli@v2
