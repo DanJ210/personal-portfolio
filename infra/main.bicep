@@ -171,27 +171,8 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 // Role assignments for ACR pull (system-assigned identities)
-resource apiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(apiApp.id, 'acrpull')
-  scope: acr
-  properties: {
-    principalId: apiApp.identity.principalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [ apiApp ]
-}
-
-resource feAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(frontendApp.id, 'acrpull')
-  scope: acr
-  properties: {
-    principalId: frontendApp.identity.principalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalType: 'ServicePrincipal'
-  }
-  dependsOn: [ frontendApp ]
-}
+// NOTE: Role assignments for AcrPull removed to avoid requiring elevated 'User Access Administrator'.
+// Ensure container app managed identities have ACR pull rights externally (az role assignment create ...).
 
 output apiFqdn string = apiApp.properties.configuration.ingress.fqdn
 output frontendFqdn string = frontendApp.properties.configuration.ingress.fqdn
