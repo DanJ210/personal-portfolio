@@ -110,6 +110,27 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: RBAC Precheck
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            echo "Validating RBAC for roleAssignments/write at RG scope..."
+            SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+            # List roles at RG scope
+            ASSIGNED_ROLES=$(az role assignment list --scope /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/$RESOURCE_GROUP --query "[?principalId=='$SP_OBJECT_ID'].roleDefinitionName" -o tsv)
+            echo "Roles found: $ASSIGNED_ROLES"
+            REQUIRED="User Access Administrator"
+            if echo "$ASSIGNED_ROLES" | grep -q "Owner"; then
+              echo "Owner role present - sufficient for role assignments."
+            elif echo "$ASSIGNED_ROLES" | grep -q "$REQUIRED"; then
+              echo "User Access Administrator role present - sufficient."
+            else
+              echo "ERROR: Service principal lacks Owner or User Access Administrator at RG scope."
+              echo "Add role: az role assignment create --assignee-object-id $SP_OBJECT_ID --role 'User Access Administrator' --scope /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/$RESOURCE_GROUP" >&2
+              exit 1
+            fi
+
       - name: What-If Infra (Bicep)
         uses: azure/cli@v2
         with:
