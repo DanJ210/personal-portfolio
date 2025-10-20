@@ -67,12 +67,16 @@ jobs:
             fi
             az acr show -n $ACR_NAME --query loginServer -o tsv
 
-      - name: ACR Login
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            az acr login -n $ACR_NAME
+      # Install Azure CLI on host runner so subsequent steps (outside azure/cli container) can use 'az'
+      - name: Install Azure CLI (host)
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: ACR Docker Login (token)
+        run: |
+          LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
+          TOKEN=$(az acr login -n $ACR_NAME --expose-token --query accessToken -o tsv)
+          echo "$TOKEN" | docker login $LOGIN_SERVER --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
       - name: Define image tags
         id: meta
