@@ -72,13 +72,31 @@ jobs:
       - name: Define image tags
         id: meta
         run: |
-          LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
+          set -e
+          LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv || true)
+          if [ -z "$LOGIN_SERVER" ]; then
+            echo "ERROR: ACR login server could not be retrieved for '$ACR_NAME'." >&2
+            exit 1
+          fi
           API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
           FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
-          echo "apiImage=$API_IMAGE" >> $GITHUB_OUTPUT
-          echo "frontendImage=$FRONTEND_IMAGE" >> $GITHUB_OUTPUT
-          echo API_IMAGE=$API_IMAGE >> $GITHUB_ENV
-          echo FRONTEND_IMAGE=$FRONTEND_IMAGE >> $GITHUB_ENV
+          if [ -z "$API_IMAGE" ] || [ -z "$FRONTEND_IMAGE" ]; then
+            echo "ERROR: Computed image tags are empty." >&2
+            exit 1
+          fi
+          echo "apiImage=$API_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
+          echo API_IMAGE=$API_IMAGE >> "$GITHUB_ENV"
+          echo FRONTEND_IMAGE=$FRONTEND_IMAGE >> "$GITHUB_ENV"
+
+      - name: Debug image outputs
+        run: |
+          echo "Step output apiImage='${{ steps.meta.outputs.apiImage }}'"
+          echo "Step output frontendImage='${{ steps.meta.outputs.frontendImage }}'"
+          if [ -z "${{ steps.meta.outputs.apiImage }}" ] || [ -z "${{ steps.meta.outputs.frontendImage }}" ]; then
+            echo "ERROR: Meta step outputs are empty after definition." >&2
+            exit 1
+          fi
 
       - name: Build API Image
         run: |
