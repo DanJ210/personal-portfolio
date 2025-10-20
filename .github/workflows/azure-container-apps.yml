@@ -30,6 +30,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug Environment Variables (host)
+        run: |
+          echo "=== Host Environment Variable Summary ==="
+          for VAR in ACR_NAME RESOURCE_GROUP LOCATION CA_ENV_NAME API_APP_NAME FRONTEND_APP_NAME API_IMAGE_REPO FRONTEND_IMAGE_REPO GITHUB_SHA; do
+            VAL=$(eval echo "${!VAR}")
+            if [ -z "$VAL" ]; then echo "$VAR=<EMPTY>"; else echo "$VAR=$VAL"; fi
+          done
+          echo "Secrets presence (not values):"
+          echo "AZURE_CLIENT_ID set? $([ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && echo yes || echo NO)"
+          echo "AZURE_TENANT_ID set? $([ -n "${{ secrets.AZURE_TENANT_ID }}" ] && echo yes || echo NO)"
+          echo "AZURE_SUBSCRIPTION_ID set? $([ -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ] && echo yes || echo NO)"
+          echo "ACR_UNIQUE_SUFFIX set? $([ -n "${{ secrets.ACR_UNIQUE_SUFFIX }}" ] && echo yes || echo NO)"
+          echo "========================================"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -52,6 +66,7 @@ jobs:
         with:
           azcliversion: latest
           inlineScript: |
+            echo "(azure/cli container) ACR_NAME=$ACR_NAME RESOURCE_GROUP=$RESOURCE_GROUP LOCATION=$LOCATION"
             if ! az acr show -n $ACR_NAME >/dev/null 2>&1; then
               echo "Creating ACR $ACR_NAME"
               az acr create -n $ACR_NAME -g $RESOURCE_GROUP --sku Basic --admin-enabled false
@@ -73,6 +88,9 @@ jobs:
         id: meta
         run: |
           set -e
+          echo "Verifying env before computing image tags:"
+          echo "ACR_NAME=$ACR_NAME"
+          echo "API_IMAGE_REPO=$API_IMAGE_REPO"; echo "FRONTEND_IMAGE_REPO=$FRONTEND_IMAGE_REPO"; echo "GITHUB_SHA=${GITHUB_SHA}";
           LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv || true)
           if [ -z "$LOGIN_SERVER" ]; then
             echo "ERROR: ACR login server could not be retrieved for '$ACR_NAME'." >&2
@@ -98,6 +116,15 @@ jobs:
             exit 1
           fi
 
+      - name: Verify exported image env vars
+        run: |
+          echo "API_IMAGE env: $API_IMAGE"
+          echo "FRONTEND_IMAGE env: $FRONTEND_IMAGE"
+          if [ -z "$API_IMAGE" ] || [ -z "$FRONTEND_IMAGE" ]; then
+            echo "ERROR: API_IMAGE or FRONTEND_IMAGE env variable is empty after meta step." >&2
+            exit 1
+          fi
+
       - name: Build API Image
         run: |
           docker build -t $API_IMAGE -f Server/Dockerfile --target final-no-frontend .
@@ -120,6 +147,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug Environment Variables (provision job host)
+        run: |
+          echo "=== Provision Job Host Env Summary ==="
+          for VAR in ACR_NAME RESOURCE_GROUP LOCATION CA_ENV_NAME API_APP_NAME FRONTEND_APP_NAME API_IMAGE_REPO FRONTEND_IMAGE_REPO GITHUB_SHA; do
+            VAL=$(eval echo "${!VAR}")
+            if [ -z "$VAL" ]; then echo "$VAR=<EMPTY>"; else echo "$VAR=$VAL"; fi
+          done
+          echo "Upstream outputs (raw): apiImage='${{ needs.build-and-push.outputs.apiImage }}' frontendImage='${{ needs.build-and-push.outputs.frontendImage }}'"
+          echo "Secrets presence (not values):"
+          echo "AZURE_CLIENT_ID set? $([ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && echo yes || echo NO)"
+          echo "AZURE_TENANT_ID set? $([ -n "${{ secrets.AZURE_TENANT_ID }}" ] && echo yes || echo NO)"
+          echo "AZURE_SUBSCRIPTION_ID set? $([ -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ] && echo yes || echo NO)"
+          echo "ACR_UNIQUE_SUFFIX set? $([ -n "${{ secrets.ACR_UNIQUE_SUFFIX }}" ] && echo yes || echo NO)"
+          echo "======================================="
 
       - name: Azure Login (OIDC)
         uses: azure/login@v1
