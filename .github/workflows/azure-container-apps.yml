@@ -27,6 +27,13 @@ jobs:
       apiImage: ${{ steps.meta.outputs.apiImage }}
       frontendImage: ${{ steps.meta.outputs.frontendImage }}
     steps:
+      - name: Debug OIDC context
+        run: |
+          echo GITHUB_REF=$GITHUB_REF
+          echo GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+          echo GITHUB_HEAD_REF=$GITHUB_HEAD_REF
+          echo GITHUB_BASE_REF=$GITHUB_BASE_REF
+
       - name: Checkout
         uses: actions/checkout@v4
 
