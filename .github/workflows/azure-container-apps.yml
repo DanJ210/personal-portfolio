@@ -115,6 +115,12 @@ jobs:
         with:
           azcliversion: latest
           inlineScript: |
+            echo "API_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.apiImage }}'"
+            echo "FRONTEND_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.frontendImage }}'"
+            if [ -z "${{ needs.build-and-push.outputs.apiImage }}" ] || [ -z "${{ needs.build-and-push.outputs.frontendImage }}" ]; then
+              echo "One or both image outputs are empty. Failing early." >&2
+              exit 1
+            fi
             az deployment group what-if \
               -g $RESOURCE_GROUP \
               -f infra/main.bicep \
@@ -123,8 +129,8 @@ jobs:
                  envName=$CA_ENV_NAME \
                  apiAppName=$API_APP_NAME \
                  frontendAppName=$FRONTEND_APP_NAME \
-                 apiImage=${{ needs.build-and-push.outputs.apiImage }} \
-                 frontendImage=${{ needs.build-and-push.outputs.frontendImage }}
+                 apiImage='${{ needs.build-and-push.outputs.apiImage }}' \
+                 frontendImage='${{ needs.build-and-push.outputs.frontendImage }}'
 
       - name: Deploy Infra (Bicep)
         uses: azure/cli@v2
@@ -139,8 +145,8 @@ jobs:
                  envName=$CA_ENV_NAME \
                  apiAppName=$API_APP_NAME \
                  frontendAppName=$FRONTEND_APP_NAME \
-                 apiImage=${{ needs.build-and-push.outputs.apiImage }} \
-                 frontendImage=${{ needs.build-and-push.outputs.frontendImage }}
+                 apiImage='${{ needs.build-and-push.outputs.apiImage }}' \
+                 frontendImage='${{ needs.build-and-push.outputs.frontendImage }}'
 
       - name: Show URLs
         uses: azure/cli@v2
