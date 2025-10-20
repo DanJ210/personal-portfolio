@@ -65,6 +65,13 @@ jobs:
             fi
             az acr show -n $ACR_NAME --query loginServer -o tsv
 
+      - name: Debug OIDC context
+        run: |
+          echo GITHUB_REF=$GITHUB_REF
+          echo GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+          echo GITHUB_HEAD_REF=$GITHUB_HEAD_REF
+          echo GITHUB_BASE_REF=$GITHUB_BASE_REF
+
       - name: ACR Login
         uses: azure/cli@v2
         with:
@@ -106,6 +113,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug OIDC context
+        run: |
+          echo GITHUB_REF=$GITHUB_REF
+          echo GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+          echo GITHUB_HEAD_REF=$GITHUB_HEAD_REF
+          echo GITHUB_BASE_REF=$GITHUB_BASE_REF
 
       - name: Azure Login (OIDC)
         uses: azure/login@v1
