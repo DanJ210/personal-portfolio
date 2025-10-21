@@ -157,11 +157,24 @@ jobs:
           echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
           echo "Published job outputs apiImage=$API_IMAGE frontendImage=$FRONTEND_IMAGE"
 
+      - name: Minimal outputs (redundant)
+        id: minimal-outputs
+        run: |
+          echo "apiImage=$API_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "(Minimal outputs step wrote same values)"
+
       - name: Show published outputs file
         run: |
           echo "---- GITHUB_OUTPUT (sanitized) ----"
           sed 's/\(password\|token\|secret\)=.*/\1=***REDACTED***/I' "$GITHUB_OUTPUT" || echo "(Not readable)"
           echo "----------------------------------"
+
+      - name: Upload outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-job-github-output
+          path: $GITHUB_OUTPUT
 
   provision-deploy:
     runs-on: ubuntu-latest
