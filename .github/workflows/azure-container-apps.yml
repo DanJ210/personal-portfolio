@@ -61,28 +61,88 @@ jobs:
 
       - name: Deploy / Update API Container App
         run: |
+          set -e
           IMAGE_REF="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
-          echo "Deploying image $IMAGE_REF to Container App $API_APP_NAME"
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          echo "Preparing deployment for image: $IMAGE_REF"
+          ACR_ID=$(az acr show -n $ACR_NAME --query id -o tsv)
+          FALLBACK=false
+
           if az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
-            az containerapp update \
-              -n $API_APP_NAME \
-              -g $RESOURCE_GROUP \
-              --image $IMAGE_REF \
-              --revision-suffix "rev-${GITHUB_SHA:0:7}" \
-              --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
-              --cpu 0.5 --memory 1Gi
+            echo "Container App exists. Ensuring system identity & AcrPull role."
+            PRINCIPAL_ID=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query identity.principalId -o tsv || true)
+            if [ -z "$PRINCIPAL_ID" ] || [ "$PRINCIPAL_ID" = "null" ]; then
+              echo "Assigning system identity..."
+              az containerapp update -n $API_APP_NAME -g $RESOURCE_GROUP --identity system >/dev/null
+              PRINCIPAL_ID=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query identity.principalId -o tsv)
+            fi
+            echo "App principalId: $PRINCIPAL_ID"
+            echo "Attempting AcrPull role assignment..."
+            if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
+              echo "AcrPull granted. Updating to private image using system identity."
+              az containerapp update \
+                -n $API_APP_NAME -g $RESOURCE_GROUP \
+                --image $IMAGE_REF \
+                --revision-suffix "rev-$SHORT_SHA" \
+                --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
+                --cpu 0.5 --memory 1Gi \
+                --registry-server $LOGIN_SERVER --identity system
+            else
+              echo "WARNING: Role assignment failed (insufficient RBAC?). Will use admin credential fallback." >&2
+              FALLBACK=true
+            fi
           else
+            echo "Creating app with public placeholder image + system identity first."
             az containerapp create \
-              -n $API_APP_NAME \
-              -g $RESOURCE_GROUP \
-              -l $LOCATION \
+              -n $API_APP_NAME -g $RESOURCE_GROUP -l $LOCATION \
               --environment $CONTAINER_ENV_NAME \
-              --image $IMAGE_REF \
+              --image mcr.microsoft.com/azuredocs/containerapps-helloworld:latest \
               --ingress external --target-port $API_PORT \
-              --revision-suffix "rev-${GITHUB_SHA:0:7}" \
+              --revision-suffix "rev-init" \
               --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
-              --cpu 0.5 --memory 1Gi
+              --cpu 0.5 --memory 1Gi \
+              --identity system
+            PRINCIPAL_ID=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query identity.principalId -o tsv)
+            echo "App principalId: $PRINCIPAL_ID"
+            echo "Assigning AcrPull to new app principal..."
+            if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
+              echo "Role assignment succeeded. Updating to private image."
+              az containerapp update \
+                -n $API_APP_NAME -g $RESOURCE_GROUP \
+                --image $IMAGE_REF \
+                --revision-suffix "rev-$SHORT_SHA" \
+                --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
+                --cpu 0.5 --memory 1Gi \
+                --registry-server $LOGIN_SERVER --identity system
+            else
+              echo "WARNING: Role assignment failed. Will fallback to admin credentials." >&2
+              FALLBACK=true
+            fi
           fi
+
+          if [ "$FALLBACK" = true ]; then
+            echo "Enabling ACR admin user (temporary fallback)." >&2
+            az acr update -n $ACR_NAME --admin-enabled true >/dev/null
+            ACR_USER=$(az acr credential show -n $ACR_NAME --query username -o tsv)
+            ACR_PASS=$(az acr credential show -n $ACR_NAME --query 'passwords[0].value' -o tsv)
+            echo "Configuring registry credentials on Container App."
+            if az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
+              az containerapp registry set -n $API_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --username $ACR_USER --password $ACR_PASS >/dev/null
+              az containerapp update -n $API_APP_NAME -g $RESOURCE_GROUP \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" \
+                --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
+                --cpu 0.5 --memory 1Gi
+            else
+              az containerapp create -n $API_APP_NAME -g $RESOURCE_GROUP -l $LOCATION \
+                --environment $CONTAINER_ENV_NAME --image $IMAGE_REF \
+                --ingress external --target-port $API_PORT \
+                --revision-suffix "rev-$SHORT_SHA" \
+                --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
+                --cpu 0.5 --memory 1Gi \
+                --registry-server $LOGIN_SERVER --registry-username $ACR_USER --registry-password $ACR_PASS
+            fi  ;
+          fi
+
           API_FQDN=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv)
           echo "API_FQDN=$API_FQDN" >> $GITHUB_ENV
           echo "Deployed API FQDN: https://$API_FQDN"
