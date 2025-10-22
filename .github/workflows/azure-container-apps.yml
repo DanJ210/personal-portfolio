@@ -1,51 +1,29 @@
-name: CI-CD Azure Container Apps
+name: build-and-deploy-api
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-env:
-  ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }}
-  RESOURCE_GROUP: portfolio-rg
-  LOCATION: eastus
-  CA_ENV_NAME: portfolio-env
-  API_APP_NAME: portfolio-api
-  FRONTEND_APP_NAME: portfolio-frontend
-  API_IMAGE_REPO: personal-portfolio-api
-  FRONTEND_IMAGE_REPO: personal-portfolio-frontend
+  workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
 
+env:
+  RESOURCE_GROUP: portfolio-rg
+  LOCATION: eastus
+  ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }}
+  CONTAINER_ENV_NAME: portfolio-env
+  API_APP_NAME: portfolio-api
+  API_IMAGE_REPO: personal-portfolio-api
+  API_PORT: 8080
+
 jobs:
-  build-and-push:
+  api-build-deploy:
     runs-on: ubuntu-latest
-    outputs:
-      apiImage: ${{ steps.publish-images.outputs.apiImage }}
-      frontendImage: ${{ steps.publish-images.outputs.frontendImage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug Environment Variables (host)
-        run: |
-          echo "=== Host Environment Variable Summary ==="
-          for VAR in ACR_NAME RESOURCE_GROUP LOCATION CA_ENV_NAME API_APP_NAME FRONTEND_APP_NAME API_IMAGE_REPO FRONTEND_IMAGE_REPO GITHUB_SHA; do
-            VAL=$(eval echo "${!VAR}")
-            if [ -z "$VAL" ]; then echo "$VAR=<EMPTY>"; else echo "$VAR=$VAL"; fi
-          done
-          echo "Secrets presence (not values):"
-          echo "AZURE_CLIENT_ID set? $([ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && echo yes || echo NO)"
-          echo "AZURE_TENANT_ID set? $([ -n "${{ secrets.AZURE_TENANT_ID }}" ] && echo yes || echo NO)"
-          echo "AZURE_SUBSCRIPTION_ID set? $([ -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ] && echo yes || echo NO)"
-          echo "ACR_UNIQUE_SUFFIX set? $([ -n "${{ secrets.ACR_UNIQUE_SUFFIX }}" ] && echo yes || echo NO)"
-          echo "========================================"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       - name: Azure Login (OIDC)
         uses: azure/login@v1
@@ -55,272 +33,60 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Ensure Resource Group
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            az group create -n $RESOURCE_GROUP -l $LOCATION
+        run: |
+          az group create -n $RESOURCE_GROUP -l $LOCATION
+
+      - name: Ensure Container Apps Environment
+        run: |
+          if ! az containerapp env show -n $CONTAINER_ENV_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
+            az containerapp env create -n $CONTAINER_ENV_NAME -g $RESOURCE_GROUP -l $LOCATION
+          fi
 
       - name: Ensure ACR
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            echo "(azure/cli container) ACR_NAME=$ACR_NAME RESOURCE_GROUP=$RESOURCE_GROUP LOCATION=$LOCATION"
-            if ! az acr show -n $ACR_NAME >/dev/null 2>&1; then
-              echo "Creating ACR $ACR_NAME"
-              az acr create -n $ACR_NAME -g $RESOURCE_GROUP --sku Basic --admin-enabled false
-            fi
-            az acr show -n $ACR_NAME --query loginServer -o tsv
-
-      # Install Azure CLI on host runner so subsequent steps (outside azure/cli container) can use 'az'
-      - name: Install Azure CLI (host)
         run: |
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-      - name: ACR Docker Login (token)
-        run: |
+          if ! az acr show -n $ACR_NAME >/dev/null 2>&1; then
+            az acr create -n $ACR_NAME -g $RESOURCE_GROUP --sku Basic --admin-enabled false
+          fi
+          az acr login -n $ACR_NAME
           LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
-          TOKEN=$(az acr login -n $ACR_NAME --expose-token --query accessToken -o tsv)
-          echo "$TOKEN" | docker login $LOGIN_SERVER --username 00000000-0000-0000-0000-000000000000 --password-stdin
-
-      - name: Define image tags
-        id: meta
-        run: |
-          set -e
-          echo "Verifying env before computing image tags:"
-          echo "ACR_NAME=$ACR_NAME"
-          echo "API_IMAGE_REPO=$API_IMAGE_REPO"; echo "FRONTEND_IMAGE_REPO=$FRONTEND_IMAGE_REPO"; echo "GITHUB_SHA=${GITHUB_SHA}";
-          LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv || true)
-          if [ -z "$LOGIN_SERVER" ]; then
-            echo "ERROR: ACR login server could not be retrieved for '$ACR_NAME'." >&2
-            exit 1
-          fi
-          API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
-          FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
-          if [ -z "$API_IMAGE" ] || [ -z "$FRONTEND_IMAGE" ]; then
-            echo "ERROR: Computed image tags are empty." >&2
-            exit 1
-          fi
-          echo "apiImage=$API_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
-          echo API_IMAGE=$API_IMAGE >> "$GITHUB_ENV"
-          echo FRONTEND_IMAGE=$FRONTEND_IMAGE >> "$GITHUB_ENV"
-
-      - name: Debug image outputs
-        run: |
-          echo "Step output apiImage='${{ steps.meta.outputs.apiImage }}'"
-          echo "Step output frontendImage='${{ steps.meta.outputs.frontendImage }}'"
-          if [ -z "${{ steps.meta.outputs.apiImage }}" ] || [ -z "${{ steps.meta.outputs.frontendImage }}" ]; then
-            echo "ERROR: Meta step outputs are empty after definition." >&2
-            exit 1
-          fi
-
-      - name: Verify exported image env vars
-        run: |
-          echo "API_IMAGE env: $API_IMAGE"
-          echo "FRONTEND_IMAGE env: $FRONTEND_IMAGE"
-          if [ -z "$API_IMAGE" ] || [ -z "$FRONTEND_IMAGE" ]; then
-            echo "ERROR: API_IMAGE or FRONTEND_IMAGE env variable is empty after meta step." >&2
-            exit 1
-          fi
+          echo "LOGIN_SERVER=$LOGIN_SERVER" >> $GITHUB_ENV
 
       - name: Build API Image
         run: |
-          docker build -t $API_IMAGE -f Server/Dockerfile --target final-no-frontend .
+          docker build -t $LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA} -f Server/Dockerfile --target final-no-frontend .
 
-      - name: Build Frontend Image
+      - name: Push API Image
         run: |
-          docker build -t $FRONTEND_IMAGE frontend
+          docker push $LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}
 
-      - name: Run .NET Tests
-        run: dotnet test --no-build --verbosity minimal
-
-      - name: Push Images
+      - name: Deploy / Update API Container App
         run: |
-          docker push $API_IMAGE
-          docker push $FRONTEND_IMAGE
-
-      - name: List local docker images
-        run: |
-          echo "Local images containing 'personal-portfolio'"
-          docker images --format '{{.Repository}}:{{.Tag}}' | grep 'personal-portfolio' || true
-
-      - name: Publish final image outputs
-        id: publish-images
-        run: |
-          if [ -z "$API_IMAGE" ] || [ -z "$FRONTEND_IMAGE" ]; then
-            echo "ERROR: Cannot publish outputs, API_IMAGE or FRONTEND_IMAGE empty." >&2
-            exit 1
-          fi
-          echo "apiImage=$API_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "Published job outputs apiImage=$API_IMAGE frontendImage=$FRONTEND_IMAGE"
-
-      - name: Minimal outputs (redundant)
-        id: minimal-outputs
-        run: |
-          echo "apiImage=$API_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "frontendImage=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "(Minimal outputs step wrote same values)"
-
-      - name: Show published outputs file
-        run: |
-          echo "---- GITHUB_OUTPUT (sanitized) ----"
-          sed 's/\(password\|token\|secret\)=.*/\1=***REDACTED***/I' "$GITHUB_OUTPUT" || echo "(Not readable)"
-          echo "----------------------------------"
-      - name: Write image tags artifact
-        run: |
-          cat > image-tags.json <<EOF
-          {
-            "apiImage": "${API_IMAGE}",
-            "frontendImage": "${FRONTEND_IMAGE}"
-          }
-          EOF
-          echo "Created image-tags.json:"; cat image-tags.json
-      - name: Upload image tags artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-tags
-          path: image-tags.json
-
-  provision-deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download image tags artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-tags
-          path: .
-
-      - name: Parse artifact image tags
-        id: parse-tags
-        run: |
-          if [ -f image-tags.json ]; then
-            echo "Found image-tags.json; contents:"; cat image-tags.json
-            API_IMAGE_FILE=$(sed -n 's/.*"apiImage" *: *"\([^"]*\)".*/\1/p' image-tags.json)
-            FRONTEND_IMAGE_FILE=$(sed -n 's/.*"frontendImage" *: *"\([^"]*\)".*/\1/p' image-tags.json)
-            echo "apiImage=$API_IMAGE_FILE" >> "$GITHUB_OUTPUT"
-            echo "frontendImage=$FRONTEND_IMAGE_FILE" >> "$GITHUB_OUTPUT"
-            echo "Parsed artifact apiImage=$API_IMAGE_FILE"
-            echo "Parsed artifact frontendImage=$FRONTEND_IMAGE_FILE"
+          IMAGE_REF="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
+          echo "Deploying image $IMAGE_REF to Container App $API_APP_NAME"
+          if az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
+            az containerapp update \
+              -n $API_APP_NAME \
+              -g $RESOURCE_GROUP \
+              --image $IMAGE_REF \
+              --revision-suffix "rev-${GITHUB_SHA:0:7}" \
+              --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
+              --resources-cpu 0.5 --resources-memory 1Gi
           else
-            echo "image-tags.json not found; skipping artifact parsing" >&2
+            az containerapp create \
+              -n $API_APP_NAME \
+              -g $RESOURCE_GROUP \
+              -l $LOCATION \
+              --environment $CONTAINER_ENV_NAME \
+              --image $IMAGE_REF \
+              --ingress external --target-port $API_PORT \
+              --revision-suffix "rev-${GITHUB_SHA:0:7}" \
+              --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
+              --resources-cpu 0.5 --resources-memory 1Gi
           fi
+          API_FQDN=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv)
+          echo "API_FQDN=$API_FQDN" >> $GITHUB_ENV
+          echo "Deployed API FQDN: https://$API_FQDN"
 
-      - name: Debug Environment Variables (provision job host)
+      - name: Summary
         run: |
-          echo "=== Provision Job Host Env Summary ==="
-          for VAR in ACR_NAME RESOURCE_GROUP LOCATION CA_ENV_NAME API_APP_NAME FRONTEND_APP_NAME API_IMAGE_REPO FRONTEND_IMAGE_REPO GITHUB_SHA; do
-            VAL=$(eval echo "${!VAR}")
-            if [ -z "$VAL" ]; then echo "$VAR=<EMPTY>"; else echo "$VAR=$VAL"; fi
-          done
-          echo "Upstream outputs (raw): apiImage='${{ needs.build-and-push.outputs.apiImage }}' frontendImage='${{ needs.build-and-push.outputs.frontendImage }}'"
-          echo "Secrets presence (not values):"
-          echo "AZURE_CLIENT_ID set? $([ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && echo yes || echo NO)"
-          echo "AZURE_TENANT_ID set? $([ -n "${{ secrets.AZURE_TENANT_ID }}" ] && echo yes || echo NO)"
-          echo "AZURE_SUBSCRIPTION_ID set? $([ -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ] && echo yes || echo NO)"
-          echo "ACR_UNIQUE_SUFFIX set? $([ -n "${{ secrets.ACR_UNIQUE_SUFFIX }}" ] && echo yes || echo NO)"
-          echo "======================================="
-
-      - name: Azure Login (OIDC)
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: RBAC Precheck
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            echo "Validating RBAC for roleAssignments/write at RG scope..."
-            SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
-            # List roles at RG scope
-            ASSIGNED_ROLES=$(az role assignment list --scope /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/$RESOURCE_GROUP --query "[?principalId=='$SP_OBJECT_ID'].roleDefinitionName" -o tsv)
-            echo "Roles found: $ASSIGNED_ROLES"
-            REQUIRED="User Access Administrator"
-            if echo "$ASSIGNED_ROLES" | grep -q "Owner"; then
-              echo "Owner role present - sufficient for role assignments."
-            elif echo "$ASSIGNED_ROLES" | grep -q "$REQUIRED"; then
-              echo "User Access Administrator role present - sufficient."
-            else
-              echo "ERROR: Service principal lacks Owner or User Access Administrator at RG scope."
-              echo "Add role: az role assignment create --assignee-object-id $SP_OBJECT_ID --role 'User Access Administrator' --scope /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/$RESOURCE_GROUP" >&2
-              exit 1
-            fi
-
-      - name: What-If Infra (Bicep)
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            echo "API_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.apiImage }}'"
-            echo "FRONTEND_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.frontendImage }}'"
-            echo "Artifact parsed apiImage='${{ steps.parse-tags.outputs.apiImage }}'"
-            echo "Artifact parsed frontendImage='${{ steps.parse-tags.outputs.frontendImage }}'"
-            LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
-            EXPECTED_API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
-            EXPECTED_FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
-            API_IMAGE_VALUE='${{ needs.build-and-push.outputs.apiImage }}'
-            FRONTEND_IMAGE_VALUE='${{ needs.build-and-push.outputs.frontendImage }}'
-            if [ -z "$API_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.apiImage }}" ]; then API_IMAGE_VALUE='${{ steps.parse-tags.outputs.apiImage }}'; fi
-            if [ -z "$FRONTEND_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.frontendImage }}" ]; then FRONTEND_IMAGE_VALUE='${{ steps.parse-tags.outputs.frontendImage }}'; fi
-            if [ -z "$API_IMAGE_VALUE" ] || [ -z "$FRONTEND_IMAGE_VALUE" ]; then
-              echo "WARNING: Upstream outputs empty; falling back to recomputed tags." >&2
-              API_IMAGE_VALUE="$EXPECTED_API_IMAGE"
-              FRONTEND_IMAGE_VALUE="$EXPECTED_FRONTEND_IMAGE"
-            fi
-            echo "Using API_IMAGE_VALUE=$API_IMAGE_VALUE"
-            echo "Using FRONTEND_IMAGE_VALUE=$FRONTEND_IMAGE_VALUE"
-            az deployment group what-if \
-              -g $RESOURCE_GROUP \
-              -f infra/main.bicep \
-              -p location=$LOCATION \
-                 acrName=$ACR_NAME \
-                 envName=$CA_ENV_NAME \
-                 apiAppName=$API_APP_NAME \
-                 frontendAppName=$FRONTEND_APP_NAME \
-                 apiImage="$API_IMAGE_VALUE" \
-                 frontendImage="$FRONTEND_IMAGE_VALUE"
-
-      - name: Deploy Infra (Bicep)
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
-            EXPECTED_API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
-            EXPECTED_FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
-            API_IMAGE_VALUE='${{ needs.build-and-push.outputs.apiImage }}'
-            FRONTEND_IMAGE_VALUE='${{ needs.build-and-push.outputs.frontendImage }}'
-            if [ -z "$API_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.apiImage }}" ]; then API_IMAGE_VALUE='${{ steps.parse-tags.outputs.apiImage }}'; fi
-            if [ -z "$FRONTEND_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.frontendImage }}" ]; then FRONTEND_IMAGE_VALUE='${{ steps.parse-tags.outputs.frontendImage }}'; fi
-            if [ -z "$API_IMAGE_VALUE" ] || [ -z "$FRONTEND_IMAGE_VALUE" ]; then
-              echo "WARNING: Upstream outputs empty; falling back to recomputed tags for deploy." >&2
-              API_IMAGE_VALUE="$EXPECTED_API_IMAGE"
-              FRONTEND_IMAGE_VALUE="$EXPECTED_FRONTEND_IMAGE"
-            fi
-            az deployment group create \
-              -g $RESOURCE_GROUP \
-              -f infra/main.bicep \
-              -p location=$LOCATION \
-                 acrName=$ACR_NAME \
-                 envName=$CA_ENV_NAME \
-                 apiAppName=$API_APP_NAME \
-                 frontendAppName=$FRONTEND_APP_NAME \
-                 apiImage="$API_IMAGE_VALUE" \
-                 frontendImage="$FRONTEND_IMAGE_VALUE"
-
-      - name: Show URLs
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            echo API URL: https://$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv)
-            echo FRONTEND URL: https://$(az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv)
+          echo "API deployed at: https://$API_FQDN"
