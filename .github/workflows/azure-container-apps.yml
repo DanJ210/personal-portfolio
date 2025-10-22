@@ -169,12 +169,20 @@ jobs:
           echo "---- GITHUB_OUTPUT (sanitized) ----"
           sed 's/\(password\|token\|secret\)=.*/\1=***REDACTED***/I' "$GITHUB_OUTPUT" || echo "(Not readable)"
           echo "----------------------------------"
-
-      - name: Upload outputs artifact
+      - name: Write image tags artifact
+        run: |
+          cat > image-tags.json <<EOF
+          {
+            "apiImage": "${API_IMAGE}",
+            "frontendImage": "${FRONTEND_IMAGE}"
+          }
+          EOF
+          echo "Created image-tags.json:"; cat image-tags.json
+      - name: Upload image tags artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-job-github-output
-          path: $GITHUB_OUTPUT
+          name: image-tags
+          path: image-tags.json
 
   provision-deploy:
     runs-on: ubuntu-latest
@@ -182,6 +190,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download image tags artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tags
+          path: .
+
+      - name: Parse artifact image tags
+        id: parse-tags
+        run: |
+          if [ -f image-tags.json ]; then
+            echo "Found image-tags.json; contents:"; cat image-tags.json
+            API_IMAGE_FILE=$(sed -n 's/.*"apiImage" *: *"\([^"]*\)".*/\1/p' image-tags.json)
+            FRONTEND_IMAGE_FILE=$(sed -n 's/.*"frontendImage" *: *"\([^"]*\)".*/\1/p' image-tags.json)
+            echo "apiImage=$API_IMAGE_FILE" >> "$GITHUB_OUTPUT"
+            echo "frontendImage=$FRONTEND_IMAGE_FILE" >> "$GITHUB_OUTPUT"
+            echo "Parsed artifact apiImage=$API_IMAGE_FILE"
+            echo "Parsed artifact frontendImage=$FRONTEND_IMAGE_FILE"
+          else
+            echo "image-tags.json not found; skipping artifact parsing" >&2
+          fi
 
       - name: Debug Environment Variables (provision job host)
         run: |
@@ -233,11 +262,15 @@ jobs:
           inlineScript: |
             echo "API_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.apiImage }}'"
             echo "FRONTEND_IMAGE (needs.build-and-push.outputs): '${{ needs.build-and-push.outputs.frontendImage }}'"
+            echo "Artifact parsed apiImage='${{ steps.parse-tags.outputs.apiImage }}'"
+            echo "Artifact parsed frontendImage='${{ steps.parse-tags.outputs.frontendImage }}'"
             LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
             EXPECTED_API_IMAGE="$LOGIN_SERVER/$API_IMAGE_REPO:${GITHUB_SHA}"
             EXPECTED_FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
             API_IMAGE_VALUE='${{ needs.build-and-push.outputs.apiImage }}'
             FRONTEND_IMAGE_VALUE='${{ needs.build-and-push.outputs.frontendImage }}'
+            if [ -z "$API_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.apiImage }}" ]; then API_IMAGE_VALUE='${{ steps.parse-tags.outputs.apiImage }}'; fi
+            if [ -z "$FRONTEND_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.frontendImage }}" ]; then FRONTEND_IMAGE_VALUE='${{ steps.parse-tags.outputs.frontendImage }}'; fi
             if [ -z "$API_IMAGE_VALUE" ] || [ -z "$FRONTEND_IMAGE_VALUE" ]; then
               echo "WARNING: Upstream outputs empty; falling back to recomputed tags." >&2
               API_IMAGE_VALUE="$EXPECTED_API_IMAGE"
@@ -266,6 +299,8 @@ jobs:
             EXPECTED_FRONTEND_IMAGE="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
             API_IMAGE_VALUE='${{ needs.build-and-push.outputs.apiImage }}'
             FRONTEND_IMAGE_VALUE='${{ needs.build-and-push.outputs.frontendImage }}'
+            if [ -z "$API_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.apiImage }}" ]; then API_IMAGE_VALUE='${{ steps.parse-tags.outputs.apiImage }}'; fi
+            if [ -z "$FRONTEND_IMAGE_VALUE" ] && [ -n "${{ steps.parse-tags.outputs.frontendImage }}" ]; then FRONTEND_IMAGE_VALUE='${{ steps.parse-tags.outputs.frontendImage }}'; fi
             if [ -z "$API_IMAGE_VALUE" ] || [ -z "$FRONTEND_IMAGE_VALUE" ]; then
               echo "WARNING: Upstream outputs empty; falling back to recomputed tags for deploy." >&2
               API_IMAGE_VALUE="$EXPECTED_API_IMAGE"
