@@ -12,7 +12,7 @@ permissions:
 env:
   RESOURCE_GROUP: portfolio-rg
   LOCATION: eastus
-  ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }}
+  ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }} 
   CONTAINER_ENV_NAME: portfolio-env
   API_APP_NAME: portfolio-api
   API_IMAGE_REPO: personal-portfolio-api
@@ -80,13 +80,13 @@ jobs:
             echo "Attempting AcrPull role assignment..."
             if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
               echo "AcrPull granted. Updating to private image using system identity."
+              az containerapp registry set -n $API_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --identity system >/dev/null
               az containerapp update \
                 -n $API_APP_NAME -g $RESOURCE_GROUP \
                 --image $IMAGE_REF \
                 --revision-suffix "rev-$SHORT_SHA" \
                 --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
-                --cpu 0.5 --memory 1Gi \
-                --registry-server $LOGIN_SERVER --identity system
+                --cpu 0.5 --memory 1Gi
             else
               echo "WARNING: Role assignment failed (insufficient RBAC?). Will use admin credential fallback." >&2
               FALLBACK=true
@@ -107,13 +107,13 @@ jobs:
             echo "Assigning AcrPull to new app principal..."
             if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
               echo "Role assignment succeeded. Updating to private image."
+              az containerapp registry set -n $API_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --identity system >/dev/null
               az containerapp update \
                 -n $API_APP_NAME -g $RESOURCE_GROUP \
                 --image $IMAGE_REF \
                 --revision-suffix "rev-$SHORT_SHA" \
                 --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
-                --cpu 0.5 --memory 1Gi \
-                --registry-server $LOGIN_SERVER --identity system
+                --cpu 0.5 --memory 1Gi
             else
               echo "WARNING: Role assignment failed. Will fallback to admin credentials." >&2
               FALLBACK=true
