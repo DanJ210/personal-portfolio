@@ -70,7 +70,7 @@ jobs:
               --image $IMAGE_REF \
               --revision-suffix "rev-${GITHUB_SHA:0:7}" \
               --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
-              --resources-cpu 0.5 --resources-memory 1Gi
+              --cpu 0.5 --memory 1Gi
           else
             az containerapp create \
               -n $API_APP_NAME \
@@ -81,7 +81,7 @@ jobs:
               --ingress external --target-port $API_PORT \
               --revision-suffix "rev-${GITHUB_SHA:0:7}" \
               --set-env-vars ASPNETCORE_ENVIRONMENT=Production \
-              --resources-cpu 0.5 --resources-memory 1Gi
+              --cpu 0.5 --memory 1Gi
           fi
           API_FQDN=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv)
           echo "API_FQDN=$API_FQDN" >> $GITHUB_ENV
