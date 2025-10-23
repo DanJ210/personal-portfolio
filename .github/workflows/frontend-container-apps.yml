@@ -15,7 +15,7 @@ env:
   ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }}
   CONTAINER_ENV_NAME: portfolio-env
   FRONTEND_APP_NAME: portfolio-frontend
-  FRONTEND_IMAGE_REPO: portfolio-frontend
+  FRONTEND_IMAGE_REPO: personal-portfolio-frontend
   API_APP_NAME: portfolio-api
 
 jobs:
