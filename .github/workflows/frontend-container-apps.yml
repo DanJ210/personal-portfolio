@@ -1,0 +1,139 @@
+name: build-and-deploy-frontend
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RESOURCE_GROUP: portfolio-rg
+  LOCATION: eastus
+  ACR_NAME: portfolioacr${{ secrets.ACR_UNIQUE_SUFFIX }}
+  CONTAINER_ENV_NAME: portfolio-env
+  FRONTEND_APP_NAME: portfolio-frontend
+  FRONTEND_IMAGE_REPO: portfolio-frontend
+  API_APP_NAME: portfolio-api
+
+jobs:
+  frontend-build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Resource Group
+        run: |
+          az group create -n $RESOURCE_GROUP -l $LOCATION
+
+      - name: Ensure Container Apps Environment
+        run: |
+          if ! az containerapp env show -n $CONTAINER_ENV_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
+            az containerapp env create -n $CONTAINER_ENV_NAME -g $RESOURCE_GROUP -l $LOCATION
+          fi
+
+      - name: Ensure ACR
+        run: |
+          if ! az acr show -n $ACR_NAME >/dev/null 2>&1; then
+            az acr create -n $ACR_NAME -g $RESOURCE_GROUP --sku Basic --admin-enabled false
+          fi
+          az acr login -n $ACR_NAME
+          LOGIN_SERVER=$(az acr show -n $ACR_NAME --query loginServer -o tsv)
+          echo "LOGIN_SERVER=$LOGIN_SERVER" >> $GITHUB_ENV
+
+      - name: Resolve API FQDN
+        run: |
+          API_FQDN=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv || echo '')
+          if [ -z "$API_FQDN" ]; then
+            echo "API_FQDN not found; using placeholder localhost:8080" >&2
+            echo "VITE_API_BASE_URL=http://localhost:8080" >> $GITHUB_ENV
+          else
+            echo "API_FQDN=$API_FQDN" >> $GITHUB_ENV
+            echo "VITE_API_BASE_URL=https://$API_FQDN" >> $GITHUB_ENV
+          fi
+
+      - name: Build Frontend Image
+        run: |
+          IMAGE_REF="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
+          echo "Building frontend image $IMAGE_REF with VITE_API_BASE_URL=$VITE_API_BASE_URL"
+          docker build -t $IMAGE_REF -f frontend/Dockerfile --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" ./frontend
+
+      - name: Push Frontend Image
+        run: |
+          IMAGE_REF="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
+          docker push $IMAGE_REF
+
+      - name: Deploy / Update Frontend Container App
+        run: |
+          set -e
+          IMAGE_REF="$LOGIN_SERVER/$FRONTEND_IMAGE_REPO:${GITHUB_SHA}"
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          ACR_ID=$(az acr show -n $ACR_NAME --query id -o tsv)
+          FALLBACK=false
+          if az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
+            echo "Frontend app exists. Ensure system identity & AcrPull role." 
+            PRINCIPAL_ID=$(az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --query identity.principalId -o tsv || true)
+            if [ -z "$PRINCIPAL_ID" ] || [ "$PRINCIPAL_ID" = "null" ]; then
+              az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --identity system >/dev/null
+              PRINCIPAL_ID=$(az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --query identity.principalId -o tsv)
+            fi
+            if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
+              az containerapp registry set -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --identity system >/dev/null
+              az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" --ingress external --target-port 80 \
+                --cpu 0.25 --memory 0.5Gi
+            else
+              echo "Role assignment failed; fallback to admin credentials." >&2
+              FALLBACK=true
+            fi
+          else
+            echo "Creating frontend container app with placeholder image first (system identity)."
+            az containerapp create -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP -l $LOCATION \
+              --environment $CONTAINER_ENV_NAME --image nginx:alpine --ingress external --target-port 80 \
+              --revision-suffix "rev-init" --cpu 0.25 --memory 0.5Gi --identity system
+            PRINCIPAL_ID=$(az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --query identity.principalId -o tsv)
+            if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
+              az containerapp registry set -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --identity system >/dev/null
+              az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" --ingress external --target-port 80 \
+                --cpu 0.25 --memory 0.5Gi
+            else
+              echo "Role assignment failed; fallback to admin credentials." >&2
+              FALLBACK=true
+            fi
+          fi
+
+          if [ "$FALLBACK" = true ]; then
+            az acr update -n $ACR_NAME --admin-enabled true >/dev/null
+            ACR_USER=$(az acr credential show -n $ACR_NAME --query username -o tsv)
+            ACR_PASS=$(az acr credential show -n $ACR_NAME --query 'passwords[0].value' -o tsv)
+            az containerapp registry set -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --username $ACR_USER --password $ACR_PASS >/dev/null
+            if az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
+              az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" --ingress external --target-port 80 \
+                --cpu 0.25 --memory 0.5Gi
+            else
+              az containerapp create -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP -l $LOCATION \
+                --environment $CONTAINER_ENV_NAME --image $IMAGE_REF --ingress external --target-port 80 \
+                --revision-suffix "rev-$SHORT_SHA" --cpu 0.25 --memory 0.5Gi \
+                --registry-server $LOGIN_SERVER --registry-username $ACR_USER --registry-password $ACR_PASS
+            fi
+          fi
+
+          FRONTEND_FQDN=$(az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv)
+          echo "FRONTEND_FQDN=$FRONTEND_FQDN" >> $GITHUB_ENV
+          echo "Frontend deployed at: https://$FRONTEND_FQDN"
+
+      - name: Summary
+        run: |
+          echo "Frontend deployed at: https://$FRONTEND_FQDN"
