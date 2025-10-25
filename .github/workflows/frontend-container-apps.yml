@@ -90,7 +90,7 @@ jobs:
             if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
               az containerapp registry set -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --identity system >/dev/null
               az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP \
-                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" --ingress external --target-port 80 \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" \
                 --cpu 0.25 --memory 0.5Gi
             else
               echo "Role assignment failed; fallback to admin credentials." >&2
@@ -105,7 +105,7 @@ jobs:
             if az role assignment create --role AcrPull --assignee $PRINCIPAL_ID --scope $ACR_ID >/dev/null 2>&1; then
               az containerapp registry set -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --identity system >/dev/null
               az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP \
-                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" --ingress external --target-port 80 \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" \
                 --cpu 0.25 --memory 0.5Gi
             else
               echo "Role assignment failed; fallback to admin credentials." >&2
@@ -120,7 +120,7 @@ jobs:
             az containerapp registry set -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP --server $LOGIN_SERVER --username $ACR_USER --password $ACR_PASS >/dev/null
             if az containerapp show -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP >/dev/null 2>&1; then
               az containerapp update -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP \
-                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" --ingress external --target-port 80 \
+                --image $IMAGE_REF --revision-suffix "rev-$SHORT_SHA" \
                 --cpu 0.25 --memory 0.5Gi
             else
               az containerapp create -n $FRONTEND_APP_NAME -g $RESOURCE_GROUP -l $LOCATION \
