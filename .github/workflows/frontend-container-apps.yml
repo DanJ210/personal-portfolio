@@ -53,14 +53,23 @@ jobs:
 
       - name: Resolve API FQDN
         run: |
-          API_FQDN=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv || echo '')
+          RETRIES=6
+          SLEEP=10
+          API_FQDN=""
+          for i in $(seq 1 $RETRIES); do
+            API_FQDN=$(az containerapp show -n $API_APP_NAME -g $RESOURCE_GROUP --query properties.configuration.ingress.fqdn -o tsv || echo '')
+            if [ -n "$API_FQDN" ]; then
+              break
+            fi
+            echo "Waiting for API FQDN (attempt $i/$RETRIES)..." >&2
+            sleep $SLEEP
+          done
           if [ -z "$API_FQDN" ]; then
-            echo "API_FQDN not found; using placeholder localhost:8080" >&2
-            echo "VITE_API_BASE_URL=http://localhost:8080" >> $GITHUB_ENV
-          else
-            echo "API_FQDN=$API_FQDN" >> $GITHUB_ENV
-            echo "VITE_API_BASE_URL=https://$API_FQDN" >> $GITHUB_ENV
+            echo "ERROR: API FQDN could not be resolved after $RETRIES attempts; aborting frontend build." >&2
+            exit 1
           fi
+          echo "API_FQDN=$API_FQDN" >> $GITHUB_ENV
+          echo "VITE_API_BASE_URL=https://$API_FQDN" >> $GITHUB_ENV
 
       - name: Build Frontend Image
         run: |
