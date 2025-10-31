@@ -1,0 +1,9 @@
+# robots.txt for personal portfolio
+# Prevent search engines from indexing files in /docs/ (documents may contain personal info)
+User-agent: *
+Disallow: /docs/
+
+# Allow everything else
+Allow: /
+
+# Note: This does NOT prevent direct access. Remove documents if they must not be public.

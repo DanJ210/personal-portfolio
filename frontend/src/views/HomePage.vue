@@ -72,9 +72,8 @@ const aboutSummary = 'Seasoned engineer with a focus on crafting maintainable ar
 
 // Placeholder documents list (will map to /public/docs later)
 const documents = [
-  { label: 'Resume (PDF)', file: 'resume.pdf', href: '/docs/resume.pdf' },
-  { label: 'Case Study: System Redesign', file: 'case-study.pdf', href: '/docs/case-study.pdf' },
-  { label: 'Reference Letters', file: 'references.pdf', href: '/docs/references.pdf' }
+  { label: 'Cover Letter', file: 'cover-letter-notable.docx', href: '/docs/cover-letter-notable.docx' },
+  { label: 'Letter of Recommendation', file: 'letter-of-recommendation.pdf', href: '/docs/letter-of-recommendation.pdf' }
 ];
 
 // Extract LinkedIn link if present
